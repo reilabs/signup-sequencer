@@ -288,8 +288,10 @@ mod test {
         let root: Hash = U256::from_dec_str("54321")?.into();
         let commitment: Hash = U256::from_dec_str("12345")?.into();
 
-        db.insert_pending_identity(0, &commitment, &root).await?;
-        db.insert_pending_identity(0, &zero, &zero_root).await?;
+        db.insert_pending_identity(0, &commitment, &root, None)
+            .await?;
+        db.insert_pending_identity(0, &zero, &zero_root, Some(2))
+            .await?;
 
         let leaf_index = db
             .get_identity_leaf_index(&commitment)
@@ -644,7 +646,7 @@ mod test {
 
         assert_eq!(next_leaf_index, 0, "Db should contain not leaf indexes");
 
-        db.insert_pending_identity(0, &identities[0], &roots[0])
+        db.insert_pending_identity(0, &identities[0], &roots[0], None)
             .await?;
 
         let next_leaf_index = db.get_next_leaf_index().await?;
@@ -662,7 +664,11 @@ mod test {
         let roots = mock_roots(5);
 
         for i in 0..5 {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
@@ -692,7 +698,11 @@ mod test {
         let roots = mock_roots(5);
 
         for i in 0..5 {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
@@ -735,7 +745,11 @@ mod test {
         let roots = mock_roots(5);
 
         for i in 0..5 {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
@@ -780,7 +794,11 @@ mod test {
         let roots = mock_roots(num_identities);
 
         for i in 0..num_identities {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
@@ -822,7 +840,11 @@ mod test {
         let roots = mock_roots(5);
 
         for i in 0..5 {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
@@ -869,7 +891,7 @@ mod test {
 
         assert!(root.is_none(), "Root should not exist");
 
-        db.insert_pending_identity(0, &identities[0], &roots[0])
+        db.insert_pending_identity(0, &identities[0], &roots[0], None)
             .await?;
 
         let root = db
@@ -925,7 +947,11 @@ mod test {
         let roots = mock_roots(7);
 
         for i in 0..5 {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
@@ -965,14 +991,18 @@ mod test {
         let zero_roots = mock_zero_roots(5);
 
         for i in 0..5 {
-            db.insert_pending_identity(i, &identities[i], &roots[i])
+            let latest_sequence_id = match i {
+                0 => None,
+                i => Some(i + 1),
+            };
+            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
                 .await
                 .context("Inserting identity")?;
         }
 
-        db.insert_pending_identity(0, &Hash::ZERO, &zero_roots[0])
+        db.insert_pending_identity(0, &Hash::ZERO, &zero_roots[0], Some(6))
             .await?;
-        db.insert_pending_identity(3, &Hash::ZERO, &zero_roots[3])
+        db.insert_pending_identity(3, &Hash::ZERO, &zero_roots[3], Some(7))
             .await?;
 
         let pending_tree_updates = db
@@ -1017,7 +1047,7 @@ mod test {
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
-        db.insert_pending_identity(0, &identities[0], &roots[0])
+        db.insert_pending_identity(0, &identities[0], &roots[0], None)
             .await
             .context("Inserting identity 1")?;
 
@@ -1034,9 +1064,9 @@ mod test {
 
         // Inserting a new pending root sets invalidation time for the
         // previous root
-        db.insert_pending_identity(1, &identities[1], &roots[1])
+        db.insert_pending_identity(1, &identities[1], &roots[1], Some(2))
             .await?;
-        db.insert_pending_identity(2, &identities[2], &roots[2])
+        db.insert_pending_identity(2, &identities[2], &roots[2], Some(3))
             .await?;
 
         let root_1_inserted_at = Utc::now();
@@ -1056,7 +1086,7 @@ mod test {
         assert_same_time!(root_item_1.pending_valid_as_of, root_1_inserted_at);
 
         // Test mined roots
-        db.insert_pending_identity(3, &identities[3], &roots[3])
+        db.insert_pending_identity(3, &identities[3], &roots[3], Some(4))
             .await?;
 
         db.mark_root_as_processed_tx(&roots[0])
@@ -1106,7 +1136,7 @@ mod test {
         assert!(db.identity_exists(identities[0]).await?);
 
         // When there's only processed identity
-        db.insert_pending_identity(0, &identities[1], &roots[0])
+        db.insert_pending_identity(0, &identities[1], &roots[0], None)
             .await
             .context("Inserting identity")?;
 
@@ -1182,10 +1212,10 @@ mod test {
         let identities = mock_identities(2);
         let roots = mock_roots(2);
 
-        db.insert_pending_identity(0, &identities[0], &roots[0])
+        db.insert_pending_identity(0, &identities[0], &roots[0], None)
             .await?;
 
-        db.insert_pending_identity(1, &identities[1], &roots[0])
+        db.insert_pending_identity(1, &identities[1], &roots[0], Some(2))
             .await?;
 
         let root_state = db

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use sqlx::{Postgres, Transaction};
 use tokio::sync::{Mutex, Notify};
 use tokio::time;
 use tracing::info;
@@ -12,6 +13,11 @@ use crate::database::Database;
 use crate::identity_tree::{Latest, TreeVersion, TreeVersionReadOps, UnprocessedStatus};
 use crate::retry_tx;
 
+// Insertion here differs from delete_identities task. This is because two
+// different flows are created for both tasks. We need to insert identities as
+// fast as possible to the tree to be able to return inclusion proof as our
+// customers depend on it. Flow here is to rewrite from unprocessed_identities
+// into identities every 5 seconds.
 pub async fn insert_identities(
     app: Arc<App>,
     pending_insertions_mutex: Arc<Mutex<()>>,
@@ -34,12 +40,12 @@ pub async fn insert_identities(
             continue;
         }
 
-        insert_identities_batch(
-            &app.database,
-            app.tree_state()?.latest_tree(),
-            &unprocessed,
-            &pending_insertions_mutex,
-        )
+        let _guard = pending_insertions_mutex.lock().await;
+        let latest_tree = app.tree_state()?.latest_tree();
+
+        retry_tx!(&app.database, tx, {
+            insert_identities_batch(&mut tx, latest_tree, &unprocessed).await
+        })
         .await?;
 
         // Notify the identity processing task, that there are new identities
@@ -48,35 +54,30 @@ pub async fn insert_identities(
 }
 
 pub async fn insert_identities_batch(
-    database: &Database,
+    tx: &mut Transaction<'_, Postgres>,
     latest_tree: &TreeVersion<Latest>,
     identities: &[UnprocessedCommitment],
-    pending_insertions_mutex: &Mutex<()>,
-) -> anyhow::Result<()> {
-    let filtered_identities = retry_tx!(database, tx, {
-        // Filter out any identities that are already in the `identities` table
-        let mut filtered_identities = vec![];
-        for identity in identities {
-            if tx
-                .get_identity_leaf_index(&identity.commitment)
-                .await?
-                .is_some()
-            {
-                tracing::warn!(?identity.commitment, "Duplicate identity");
-                tx.remove_unprocessed_identity(&identity.commitment).await?;
-            } else {
-                filtered_identities.push(identity.commitment);
-            }
+) -> Result<(), anyhow::Error> {
+    // Filter out any identities that are already in the `identities` table
+    let mut filtered_identities = vec![];
+    for identity in identities {
+        if tx
+            .get_identity_leaf_index(&identity.commitment)
+            .await?
+            .is_some()
+        {
+            tracing::warn!(?identity.commitment, "Duplicate identity");
+            tx.remove_unprocessed_identity(&identity.commitment).await?;
+        } else {
+            filtered_identities.push(identity.commitment);
         }
-        Result::<_, anyhow::Error>::Ok(filtered_identities)
-    })
-    .await?;
+    }
 
-    let _guard = pending_insertions_mutex.lock().await;
+    let mut latest_identity_id = tx.get_latest_identity_id().await?;
 
     let next_leaf = latest_tree.next_leaf();
 
-    let next_db_index = retry_tx!(database, tx, tx.get_next_leaf_index().await).await?;
+    let next_db_index = tx.get_next_leaf_index().await?;
 
     assert_eq!(
         next_leaf, next_db_index,
@@ -92,15 +93,17 @@ pub async fn insert_identities_batch(
         "Length mismatch when appending identities to tree"
     );
 
-    retry_tx!(database, tx, {
-        for ((root, _proof, leaf_index), identity) in data.iter().zip(&filtered_identities) {
-            tx.insert_pending_identity(*leaf_index, identity, root)
-                .await?;
+    for ((root, _proof, leaf_index), identity) in data.iter().zip(&filtered_identities) {
+        tx.insert_pending_identity(*leaf_index, identity, root, latest_identity_id)
+            .await?;
 
-            tx.remove_unprocessed_identity(identity).await?;
-        }
+        latest_identity_id = match latest_identity_id {
+            None => Some(2),
+            Some(i) => Some(i + 1),
+        };
 
-        Result::<_, anyhow::Error>::Ok(())
-    })
-    .await
+        tx.remove_unprocessed_identity(identity).await?;
+    }
+
+    Ok(())
 }

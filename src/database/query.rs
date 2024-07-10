@@ -25,21 +25,40 @@ pub trait DatabaseQuery<'a>: Executor<'a, Database = Postgres> {
         leaf_index: usize,
         identity: &Hash,
         root: &Hash,
+        prev_id: Option<usize>,
     ) -> Result<(), Error> {
         let insert_pending_identity_query = sqlx::query(
             r#"
-            INSERT INTO identities (leaf_index, commitment, root, status, pending_as_of)
-            VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+            INSERT INTO identities (leaf_index, commitment, root, status, pending_as_of, prev_id)
+            VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
             "#,
         )
         .bind(leaf_index as i64)
         .bind(identity)
         .bind(root)
-        .bind(<&str>::from(ProcessedStatus::Pending));
+        .bind(<&str>::from(ProcessedStatus::Pending))
+        .bind(prev_id.map(|v| v as i64));
 
         self.execute(insert_pending_identity_query).await?;
 
         Ok(())
+    }
+
+    async fn get_latest_identity_id(self) -> Result<Option<usize>, Error> {
+        let query = sqlx::query(
+            r#"
+            SELECT id FROM identities
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        );
+
+        let row = self.fetch_optional(query).await?;
+
+        let Some(row) = row else { return Ok(None) };
+        let id = row.get::<i64, _>(0);
+
+        Ok(Some(id as usize))
     }
 
     async fn get_id_by_root(self, root: &Hash) -> Result<Option<usize>, Error> {

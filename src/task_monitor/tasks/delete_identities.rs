@@ -13,6 +13,12 @@ use crate::database::query::DatabaseQuery;
 use crate::database::types::DeletionEntry;
 use crate::identity_tree::{Hash, TreeVersionReadOps};
 
+// Deletion here differs from insert_identites task. This is because two
+// different flows are created for both tasks. Due to how our prover works
+// (can handle only a batch of same operations types - insertion or deletion)
+// we want to group together insertions and deletions. We are doing it by
+// grouping deletions (as the not need to be put into tree immediately as
+// insertions) and putting them into the tree
 pub async fn delete_identities(
     app: Arc<App>,
     pending_insertions_mutex: Arc<Mutex<()>>,
@@ -33,6 +39,8 @@ pub async fn delete_identities(
         if deletions.is_empty() {
             continue;
         }
+
+        let mut latest_identity_id = app.database.get_latest_identity_id().await?;
 
         let last_deletion_timestamp = app.database.get_latest_deletion().await?.timestamp;
 
@@ -84,8 +92,13 @@ pub async fn delete_identities(
         let items = data.into_iter().zip(leaf_indices);
         for ((root, _proof), leaf_index) in items {
             app.database
-                .insert_pending_identity(leaf_index, &Hash::ZERO, &root)
+                .insert_pending_identity(leaf_index, &Hash::ZERO, &root, latest_identity_id)
                 .await?;
+
+            latest_identity_id = match latest_identity_id {
+                None => Some(2),
+                Some(i) => Some(i + 1),
+            };
         }
 
         // Remove the previous commitments from the deletions table
