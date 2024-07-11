@@ -25,11 +25,11 @@ pub trait DatabaseQuery<'a>: Executor<'a, Database = Postgres> {
         leaf_index: usize,
         identity: &Hash,
         root: &Hash,
-        prev_id: Option<usize>,
+        pre_root: &Hash,
     ) -> Result<(), Error> {
         let insert_pending_identity_query = sqlx::query(
             r#"
-            INSERT INTO identities (leaf_index, commitment, root, status, pending_as_of, prev_id)
+            INSERT INTO identities (leaf_index, commitment, root, status, pending_as_of, pre_root)
             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
             "#,
         )
@@ -37,28 +37,11 @@ pub trait DatabaseQuery<'a>: Executor<'a, Database = Postgres> {
         .bind(identity)
         .bind(root)
         .bind(<&str>::from(ProcessedStatus::Pending))
-        .bind(prev_id.map(|v| v as i64));
+        .bind(pre_root);
 
         self.execute(insert_pending_identity_query).await?;
 
         Ok(())
-    }
-
-    async fn get_latest_identity_id(self) -> Result<Option<usize>, Error> {
-        let query = sqlx::query(
-            r#"
-            SELECT id FROM identities
-            ORDER BY id DESC
-            LIMIT 1
-            "#,
-        );
-
-        let row = self.fetch_optional(query).await?;
-
-        let Some(row) = row else { return Ok(None) };
-        let id = row.get::<i64, _>(0);
-
-        Ok(Some(id as usize))
     }
 
     async fn get_id_by_root(self, root: &Hash) -> Result<Option<usize>, Error> {
@@ -199,6 +182,17 @@ pub trait DatabaseQuery<'a>: Executor<'a, Database = Postgres> {
         .into_iter()
         .map(|row| row.get::<Hash, _>(0))
         .collect())
+    }
+
+    async fn get_latest_root(self) -> Result<Option<Hash>, Error> {
+        Ok(sqlx::query(
+            r#"
+            SELECT root FROM identities ORDER BY id DESC LIMIT 1
+            "#,
+        )
+        .fetch_optional(self)
+        .await?
+        .map(|r| r.get::<Hash, _>(0)))
     }
 
     async fn get_latest_root_by_status(

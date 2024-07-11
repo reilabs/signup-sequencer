@@ -158,7 +158,10 @@ mod test {
     use ethers::types::U256;
     use postgres_docker_utils::DockerContainer;
     use ruint::Uint;
+    use semaphore::poseidon_tree::LazyPoseidonTree;
     use semaphore::Field;
+    use sqlx::postgres::PgDatabaseError;
+    use sqlx::Error;
     use testcontainers::clients::Cli;
 
     use super::Database;
@@ -284,13 +287,14 @@ mod test {
         let (db, _db_container) = setup_db(&docker).await?;
 
         let zero: Hash = U256::zero().into();
+        let initial_root = LazyPoseidonTree::new(4, zero).root();
         let zero_root: Hash = U256::from_dec_str("6789")?.into();
         let root: Hash = U256::from_dec_str("54321")?.into();
         let commitment: Hash = U256::from_dec_str("12345")?.into();
 
-        db.insert_pending_identity(0, &commitment, &root, None)
+        db.insert_pending_identity(0, &commitment, &root, &initial_root)
             .await?;
-        db.insert_pending_identity(0, &zero, &zero_root, Some(2))
+        db.insert_pending_identity(0, &zero, &zero_root, &root)
             .await?;
 
         let leaf_index = db
@@ -639,6 +643,7 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(1);
         let roots = mock_roots(1);
 
@@ -646,7 +651,7 @@ mod test {
 
         assert_eq!(next_leaf_index, 0, "Db should contain not leaf indexes");
 
-        db.insert_pending_identity(0, &identities[0], &roots[0], None)
+        db.insert_pending_identity(0, &identities[0], &roots[0], &initial_root)
             .await?;
 
         let next_leaf_index = db.get_next_leaf_index().await?;
@@ -660,17 +665,16 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
+        let mut pre_root = &initial_root;
         for i in 0..5 {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
         db.mark_root_as_processed_tx(&roots[2]).await?;
@@ -694,17 +698,16 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
+        let mut pre_root = &initial_root;
         for i in 0..5 {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
         db.mark_root_as_processed_tx(&roots[2]).await?;
@@ -741,17 +744,16 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
+        let mut pre_root = &initial_root;
         for i in 0..5 {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
         db.mark_root_as_mined_tx(&roots[2]).await?;
@@ -790,17 +792,16 @@ mod test {
 
         let num_identities = 6;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(num_identities);
         let roots = mock_roots(num_identities);
 
+        let mut pre_root = &initial_root;
         for i in 0..num_identities {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
         println!("Marking roots up to 2nd as processed");
@@ -836,17 +837,16 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
+        let mut pre_root = &initial_root;
         for i in 0..5 {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
         // root[2] is somehow erroneously marked as mined
@@ -884,6 +884,7 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
@@ -891,7 +892,7 @@ mod test {
 
         assert!(root.is_none(), "Root should not exist");
 
-        db.insert_pending_identity(0, &identities[0], &roots[0], None)
+        db.insert_pending_identity(0, &identities[0], &roots[0], &initial_root)
             .await?;
 
         let root = db
@@ -942,18 +943,17 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
 
         let roots = mock_roots(7);
 
+        let mut pre_root = &initial_root;
         for i in 0..5 {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
         db.mark_root_as_processed_tx(&roots[2]).await?;
@@ -985,24 +985,23 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
 
         let roots = mock_roots(5);
         let zero_roots = mock_zero_roots(5);
 
+        let mut pre_root = &initial_root;
         for i in 0..5 {
-            let latest_sequence_id = match i {
-                0 => None,
-                i => Some(i + 1),
-            };
-            db.insert_pending_identity(i, &identities[i], &roots[i], latest_sequence_id)
+            db.insert_pending_identity(i, &identities[i], &roots[i], pre_root)
                 .await
                 .context("Inserting identity")?;
+            pre_root = &roots[i];
         }
 
-        db.insert_pending_identity(0, &Hash::ZERO, &zero_roots[0], Some(6))
+        db.insert_pending_identity(0, &Hash::ZERO, &zero_roots[0], &roots[4])
             .await?;
-        db.insert_pending_identity(3, &Hash::ZERO, &zero_roots[3], Some(7))
+        db.insert_pending_identity(3, &Hash::ZERO, &zero_roots[3], &zero_roots[0])
             .await?;
 
         let pending_tree_updates = db
@@ -1044,10 +1043,11 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(5);
         let roots = mock_roots(5);
 
-        db.insert_pending_identity(0, &identities[0], &roots[0], None)
+        db.insert_pending_identity(0, &identities[0], &roots[0], &initial_root)
             .await
             .context("Inserting identity 1")?;
 
@@ -1064,9 +1064,9 @@ mod test {
 
         // Inserting a new pending root sets invalidation time for the
         // previous root
-        db.insert_pending_identity(1, &identities[1], &roots[1], Some(2))
+        db.insert_pending_identity(1, &identities[1], &roots[1], &roots[0])
             .await?;
-        db.insert_pending_identity(2, &identities[2], &roots[2], Some(3))
+        db.insert_pending_identity(2, &identities[2], &roots[2], &roots[1])
             .await?;
 
         let root_1_inserted_at = Utc::now();
@@ -1086,7 +1086,7 @@ mod test {
         assert_same_time!(root_item_1.pending_valid_as_of, root_1_inserted_at);
 
         // Test mined roots
-        db.insert_pending_identity(3, &identities[3], &roots[3], Some(4))
+        db.insert_pending_identity(3, &identities[3], &roots[3], &roots[2])
             .await?;
 
         db.mark_root_as_processed_tx(&roots[0])
@@ -1121,6 +1121,7 @@ mod test {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
 
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(2);
         let roots = mock_roots(1);
 
@@ -1136,7 +1137,7 @@ mod test {
         assert!(db.identity_exists(identities[0]).await?);
 
         // When there's only processed identity
-        db.insert_pending_identity(0, &identities[1], &roots[0], None)
+        db.insert_pending_identity(0, &identities[1], &roots[0], &initial_root)
             .await
             .context("Inserting identity")?;
 
@@ -1206,24 +1207,26 @@ mod test {
     }
 
     #[tokio::test]
-    async fn can_insert_same_root_multiple_times() -> anyhow::Result<()> {
+    async fn cannot_insert_same_root_multiple_times() -> anyhow::Result<()> {
         let docker = Cli::default();
         let (db, _db_container) = setup_db(&docker).await?;
+
+        let initial_root = LazyPoseidonTree::new(4, Hash::ZERO).root();
         let identities = mock_identities(2);
         let roots = mock_roots(2);
 
-        db.insert_pending_identity(0, &identities[0], &roots[0], None)
+        db.insert_pending_identity(0, &identities[0], &roots[0], &initial_root)
             .await?;
 
-        db.insert_pending_identity(1, &identities[1], &roots[0], Some(2))
-            .await?;
+        let res = db
+            .insert_pending_identity(1, &identities[1], &roots[0], &roots[0])
+            .await;
 
-        let root_state = db
-            .get_root_state(&roots[0])
-            .await?
-            .context("Missing root")?;
-
-        assert_eq!(root_state.status, ProcessedStatus::Pending);
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate key value violates unique constraint \"unique_root_key\""));
 
         Ok(())
     }

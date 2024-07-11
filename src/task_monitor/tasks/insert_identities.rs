@@ -73,8 +73,6 @@ pub async fn insert_identities_batch(
         }
     }
 
-    let mut latest_identity_id = tx.get_latest_identity_id().await?;
-
     let next_leaf = latest_tree.next_leaf();
 
     let next_db_index = tx.get_next_leaf_index().await?;
@@ -85,6 +83,7 @@ pub async fn insert_identities_batch(
          {next_db_index}"
     );
 
+    let mut pre_root = &latest_tree.get_root();
     let data = latest_tree.append_many(&filtered_identities);
 
     assert_eq!(
@@ -94,13 +93,9 @@ pub async fn insert_identities_batch(
     );
 
     for ((root, _proof, leaf_index), identity) in data.iter().zip(&filtered_identities) {
-        tx.insert_pending_identity(*leaf_index, identity, root, latest_identity_id)
+        tx.insert_pending_identity(*leaf_index, identity, root, pre_root)
             .await?;
-
-        latest_identity_id = match latest_identity_id {
-            None => Some(2),
-            Some(i) => Some(i + 1),
-        };
+        pre_root = root;
 
         tx.remove_unprocessed_identity(identity).await?;
     }

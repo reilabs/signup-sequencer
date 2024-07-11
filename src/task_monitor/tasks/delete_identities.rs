@@ -40,8 +40,6 @@ pub async fn delete_identities(
             continue;
         }
 
-        let mut latest_identity_id = app.database.get_latest_identity_id().await?;
-
         let last_deletion_timestamp = app.database.get_latest_deletion().await?.timestamp;
 
         // If the minimum deletions batch size is not reached and the deletion time
@@ -78,6 +76,7 @@ pub async fn delete_identities(
             }
         }
 
+        let mut pre_root = app.tree_state()?.latest_tree().get_root();
         // Delete the commitments at the target leaf indices in the latest tree,
         // generating the proof for each update
         let data = app.tree_state()?.latest_tree().delete_many(&leaf_indices);
@@ -92,13 +91,9 @@ pub async fn delete_identities(
         let items = data.into_iter().zip(leaf_indices);
         for ((root, _proof), leaf_index) in items {
             app.database
-                .insert_pending_identity(leaf_index, &Hash::ZERO, &root, latest_identity_id)
+                .insert_pending_identity(leaf_index, &Hash::ZERO, &root, &pre_root)
                 .await?;
-
-            latest_identity_id = match latest_identity_id {
-                None => Some(2),
-                Some(i) => Some(i + 1),
-            };
+            pre_root = root.clone();
         }
 
         // Remove the previous commitments from the deletions table
