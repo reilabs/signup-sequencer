@@ -5,8 +5,8 @@ DROP INDEX identities_root;
 ALTER TABLE identities
     ADD CONSTRAINT unique_root_key UNIQUE(root);
 
--- Add the new 'prev_id' column
-ALTER TABLE identities ADD COLUMN pre_root BYTEA NOT NULL UNIQUE;
+-- Add the new 'prev_root' column
+ALTER TABLE identities ADD COLUMN pre_root BYTEA;
 
 -- This constraint ensures that we have consistent database and changes to the tre are done in a valid sequence.
 CREATE OR REPLACE FUNCTION validate_pre_root() returns trigger as $$
